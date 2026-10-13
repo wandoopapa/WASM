@@ -6,6 +6,9 @@ const show = (id) => { document.querySelectorAll(".scr").forEach(e => e.classLis
 const stat = (id, t) => { $(id).textContent = t; };
 
 let ipn = null, token = null, me = null, labels = {}, rooms = [], curRoom = null, timer = null;
+// 탭 닫기/새로고침 시 ephemeral 노드가 테일넷에 남지 않도록 로그아웃 시도.
+// (명시적 logout = 즉시 삭제, 그냥 끊기면 30~60분 후 정리)
+window.addEventListener("pagehide", () => { try { if (ipn) ipn.logout(); } catch (e) {} });
 
 async function gwFetch(path, method, body, contentType) {
   const opts = { method: method || "GET", headers: {} };
