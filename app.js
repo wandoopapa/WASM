@@ -60,8 +60,10 @@ async function loadRoom(rid) {
   stat("chatstat", "불러오는 중…");
   try {
     const d = await apiGet("/api/messages/" + encodeURIComponent(rid));
-    renderMessages(d.messages || []);
-    stat("chatstat", (d.messages || []).length + "건");
+    // 서버: 기본 폴링은 배열 직접 반환, before_id 페이징만 {messages} 객체
+    const list = Array.isArray(d) ? d : (d.messages || []);
+    renderMessages(list);
+    stat("chatstat", list.length + "건");
   } catch (e) { stat("chatstat", "오류: " + e.message); }
 }
 
