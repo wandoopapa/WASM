@@ -27,28 +27,61 @@ const apiPost = (p, obj) => gwFetch(p, "POST", JSON.stringify(obj));
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function dispName(uid) { return labels[uid] || uid || ""; }
 
+const mediaCache = {};  // url -> blob: URL (15초 자동 새로고침 시 재요청 방지)
+function mimeGuess(url) {
+  const u = url.toLowerCase();
+  if (u.endsWith(".png")) return "image/png";
+  if (u.endsWith(".gif")) return "image/gif";
+  if (u.endsWith(".webp")) return "image/webp";
+  if (u.endsWith(".mp4") || u.endsWith(".m4v")) return "video/mp4";
+  if (u.endsWith(".mov")) return "video/quicktime";
+  if (u.endsWith(".webm")) return "video/webm";
+  return "image/jpeg";
+}
+// 사진/동영상은 브라우저가 직접 못 받음(테일넷 주소) → WASM fetch 경유 → blob URL로 표시
+async function loadMedia(el, url) {
+  try {
+    if (mediaCache[url]) { el.src = mediaCache[url]; return; }
+    const full = url.startsWith("/") ? BASE + url : url;
+    const res = await ipn.fetch(full);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const buf = await res.arrayBuffer();
+    const blobUrl = URL.createObjectURL(new Blob([buf], { type: mimeGuess(url) }));
+    mediaCache[url] = blobUrl;
+    el.src = blobUrl;
+  } catch (e) { el.alt = "불러오기 실패"; }
+}
 function renderMessages(list) {
   const box = $("msgs"); box.innerHTML = "";
   for (const m of list) {
     const d = document.createElement("div");
-    const mine = (m.author === me);
-    d.className = "m" + (mine ? " mine" : "");
-    let html = '<div class="who">' + esc(dispName(m.author)) + "</div>";
+    d.className = "m" + ((m.author === me) ? " mine" : "");
+    const who = document.createElement("div");
+    who.className = "who";
+    who.textContent = dispName(m.author);
+    d.appendChild(who);
+    const b = document.createElement("div");
+    b.className = "b";
     const c = String(m.content || "");
     // 사진/동영상 마커 렌더 (서버 저장 형식: 📷 사진: <url> / 🎬 동영상: <url>)
     const lines = c.split("\n");
-    let body = "";
     for (const ln of lines) {
-      const ph = ln.match(/^[📷🎬] (?:사진|동영상): (\S+)$/u);  // u 플래그 필수: 서로게이트 페어 이모지 매칭
+      const ph = ln.match(/^[📷🎬] (?:사진|동영상): (\S+)$/u);  // u 플래그 필수: 서로게이트 페어
       if (ph) {
         const isV = ln.startsWith("🎬");
-        body += isV
-          ? '<video src="' + esc(ph[1]) + '" controls></video>'
-          : '<img src="' + esc(ph[1]) + '" loading="lazy">';
-      } else if (ln.trim()) { body += esc(ln) + "<br>"; }
+        const el = document.createElement(isV ? "video" : "img");
+        if (isV) el.controls = true; else el.alt = "사진";
+        loadMedia(el, ph[1]);  // 비동기 테일넷 경유 로드
+        b.appendChild(el);
+      } else if (ln.trim()) {
+        const sp = document.createElement("span");
+        sp.textContent = ln;
+        b.appendChild(sp);
+        b.appendChild(document.createElement("br"));
+      }
     }
-    html += '<div class="b">' + (body || esc(c)) + "</div>";
-    d.innerHTML = html;
+    if (!b.hasChildNodes()) b.textContent = c;
+    d.appendChild(b);
     box.appendChild(d);
   }
   box.scrollTop = box.scrollHeight;
