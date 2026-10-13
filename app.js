@@ -79,25 +79,29 @@ async function sendText() {
   $("btn-send").disabled = false;
 }
 
-function fileToB64(file) {
-  return new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onload = () => res(String(r.result).split(",")[1]);
-    r.onerror = rej;
-    r.readAsDataURL(file);
-  });
-}
-
 async function sendPhotos(files) {
   if (!files.length || !curRoom) return;
-  stat("chatstat", "사진 업로드 중… (" + files.length + "장)");
+  const fl = Array.from(files).slice(0, 4);
+  stat("chatstat", "사진 업로드 중… (" + fl.length + "장)");
   try {
-    const imgs = [];
-    for (const f of Array.from(files).slice(0, 4)) {
-      imgs.push({ name: f.name.slice(0, 60), data: await fileToB64(f), mime: f.type || "image/jpeg" });
+    // 폰 앱과 동일 경로: POST /api/photo/<room> (multipart) → 서버가 파일 저장 + 📷 사진: <url> 메시지 자동 생성
+    const bnd = "gw" + Math.random().toString(36).slice(2);
+    const enc = new TextEncoder();
+    const chunks = [];
+    for (const f of fl) {
+      chunks.push(enc.encode('--' + bnd + '\r\nContent-Disposition: form-data; name="file"; filename="' + f.name.replace(/"/g, "").slice(0, 60) + '"\r\nContent-Type: ' + (f.type || "image/jpeg") + "\r\n\r\n"));
+      chunks.push(new Uint8Array(await f.arrayBuffer()));
+      chunks.push(enc.encode("\r\n"));
     }
-    await apiPost("/api/chat/" + encodeURIComponent(curRoom), { images: imgs });
+    chunks.push(enc.encode("--" + bnd + "--\r\n"));
+    let len = 0;
+    for (const c of chunks) len += c.length;
+    const body = new Uint8Array(len);
+    let off = 0;
+    for (const c of chunks) { body.set(c, off); off += c.length; }
+    await gwFetch("/api/photo/" + encodeURIComponent(curRoom), "POST", body, "multipart/form-data; boundary=" + bnd);
     await loadRoom(curRoom);
+    stat("chatstat", fl.length + "장 전송됨");
   } catch (e) { stat("chatstat", "사진 오류: " + e.message); }
 }
 
