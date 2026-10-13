@@ -39,17 +39,39 @@ function mimeGuess(url) {
   return "image/jpeg";
 }
 // 사진/동영상은 브라우저가 직접 못 받음(테일넷 주소) → WASM fetch 경유 → blob URL로 표시
+// 사진 서빙 API는 헤더가 아닌 ?t=토큰 쿼리로만 인증함
 async function loadMedia(el, url) {
+  el.classList.add("loading");
   try {
-    if (mediaCache[url]) { el.src = mediaCache[url]; return; }
-    const full = url.startsWith("/") ? BASE + url : url;
+    if (mediaCache[url]) { el.src = mediaCache[url]; el.classList.remove("loading"); return; }
+    const sep = url.includes("?") ? "&" : "?";
+    const full = (url.startsWith("/") ? BASE + url : url) + sep + "t=" + encodeURIComponent(token || "");
     const res = await ipn.fetch(full);
     if (!res.ok) throw new Error("HTTP " + res.status);
     const buf = await res.arrayBuffer();
     const blobUrl = URL.createObjectURL(new Blob([buf], { type: mimeGuess(url) }));
     mediaCache[url] = blobUrl;
     el.src = blobUrl;
-  } catch (e) { el.alt = "불러오기 실패"; }
+    el.classList.remove("loading");
+  } catch (e) {
+    el.classList.remove("loading");
+    el.classList.add("media-err");
+    el.alt = "불러오기 실패 — 탭하여 재시도";
+    el.title = String(e.message || e);
+  }
+}
+function mediaClick(el, url) {
+  if (el.classList.contains("media-err")) {
+    delete mediaCache[url];
+    el.classList.remove("media-err");
+    loadMedia(el, url);
+  } else if (el.src && el.src.startsWith("blob:")) {
+    window.open(el.src, "_blank", "noopener");
+  }
+}
+function fmtTime(ts) {
+  const m = String(ts || "").match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  return m ? m[4] + ":" + m[5] : "";
 }
 function renderMessages(list) {
   const box = $("msgs"); box.innerHTML = "";
@@ -58,7 +80,8 @@ function renderMessages(list) {
     d.className = "m" + ((m.author === me) ? " mine" : "");
     const who = document.createElement("div");
     who.className = "who";
-    who.textContent = dispName(m.author);
+    const tm = fmtTime(m.created_at);
+    who.textContent = dispName(m.author) + (tm ? " · " + tm : "");
     d.appendChild(who);
     const b = document.createElement("div");
     b.className = "b";
@@ -70,7 +93,8 @@ function renderMessages(list) {
       if (ph) {
         const isV = ln.startsWith("🎬");
         const el = document.createElement(isV ? "video" : "img");
-        if (isV) el.controls = true; else el.alt = "사진";
+        if (isV) { el.controls = true; el.preload = "metadata"; }
+        else { el.alt = "사진"; el.onclick = () => mediaClick(el, ph[1]); }
         loadMedia(el, ph[1]);  // 비동기 테일넷 경유 로드
         b.appendChild(el);
       } else if (ln.trim()) {
