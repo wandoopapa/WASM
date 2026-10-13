@@ -39,7 +39,7 @@ function renderMessages(list) {
     const lines = c.split("\n");
     let body = "";
     for (const ln of lines) {
-      const ph = ln.match(/^[📷🎬] (?:사진|동영상): (\S+)$/);
+      const ph = ln.match(/^[📷🎬] (?:사진|동영상): (\S+)$/u);  // u 플래그 필수: 서로게이트 페어 이모지 매칭
       if (ph) {
         const isV = ln.startsWith("🎬");
         body += isV
