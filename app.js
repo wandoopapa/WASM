@@ -60,6 +60,46 @@ async function loadMedia(el, url) {
     el.title = String(e.message || e);
   }
 }
+// 대용량 동영상: 4MB 청크 Range 요청으로 분할 수신 (WASM 메모리 부담↓ + 진행 표시)
+async function loadVideo(el, url) {
+  const CHUNK = 4 * 1024 * 1024;
+  el.classList.add("loading");
+  const wrap = el.parentElement;
+  let prog = null;
+  try {
+    if (mediaCache[url]) { el.src = mediaCache[url]; el.classList.remove("loading"); return; }
+    const sep = url.includes("?") ? "&" : "?";
+    const base = (url.startsWith("/") ? BASE + url : url) + sep + "t=" + encodeURIComponent(token || "");
+    prog = document.createElement("div");
+    prog.className = "vprog";
+    prog.textContent = "동영상 받는 중…";
+    wrap.appendChild(prog);
+    let offset = 0;
+    const parts = [];
+    for (;;) {
+      const res = await ipn.fetch(base, { headers: { "Range": "bytes=" + offset + "-" + (offset + CHUNK - 1) } });
+      if (res.status === 416) break;  // 범위 초과 = 끝
+      if (!(res.ok || res.status === 206)) throw new Error("HTTP " + res.status);
+      const buf = await res.arrayBuffer();
+      if (!buf || buf.byteLength === 0) break;
+      parts.push(buf);
+      offset += buf.byteLength;
+      prog.textContent = "동영상 받는 중 " + (offset / 1048576).toFixed(1) + " MB";
+      if (buf.byteLength < CHUNK) break;
+    }
+    prog.remove(); prog = null;
+    if (!parts.length) throw new Error("empty");
+    const blobUrl = URL.createObjectURL(new Blob(parts, { type: mimeGuess(url) }));
+    mediaCache[url] = blobUrl;
+    el.src = blobUrl;
+    el.classList.remove("loading");
+  } catch (e) {
+    el.classList.remove("loading");
+    if (prog) prog.textContent = "불러오기 실패: " + (e.message || e);
+    else { const p2 = document.createElement("div"); p2.className = "vprog"; p2.textContent = "불러오기 실패: " + (e.message || e); wrap.appendChild(p2); }
+    el.title = String(e.message || e);
+  }
+}
 function mediaClick(el, url) {
   if (el.classList.contains("media-err")) {
     delete mediaCache[url];
@@ -93,9 +133,8 @@ function renderMessages(list) {
       if (ph) {
         const isV = ln.startsWith("🎬");
         const el = document.createElement(isV ? "video" : "img");
-        if (isV) { el.controls = true; el.preload = "metadata"; }
-        else { el.alt = "사진"; el.onclick = () => mediaClick(el, ph[1]); }
-        loadMedia(el, ph[1]);  // 비동기 테일넷 경유 로드
+        if (isV) { el.controls = true; el.preload = "metadata"; loadVideo(el, ph[1]); }
+        else { el.alt = "사진"; el.onclick = () => mediaClick(el, ph[1]); loadMedia(el, ph[1]); }
         b.appendChild(el);
       } else if (ln.trim()) {
         const sp = document.createElement("span");
