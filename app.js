@@ -5,7 +5,7 @@ const $ = (id) => document.getElementById(id);
 const show = (id) => { document.querySelectorAll(".scr").forEach(e => e.classList.remove("on")); $(id).classList.add("on"); };
 const stat = (id, t) => { $(id).textContent = t; };
 
-let ipn = null, token = null, me = null, labels = {}, rooms = [], curRoom = null, timer = null;
+let ipn = null, token = null, me = null, labels = {}, rooms = [], curRoom = null, timer = null, lastDay = null;
 // 탭 닫기/새로고침 시 ephemeral 노드가 테일넷에 남지 않도록 로그아웃 시도.
 // (명시적 logout = 즉시 삭제, 그냥 끊기면 30~60분 후 정리)
 window.addEventListener("pagehide", () => { try { if (ipn) ipn.logout(); } catch (e) {} });
@@ -153,15 +153,29 @@ function renderMessages(list) {
   box.scrollTop = box.scrollHeight;
 }
 
+function appendDayNote() {
+  const box = $("msgs");
+  const d = document.createElement("div");
+  d.className = "daynote";
+  d.textContent = "새 날이 시작되었습니다.";
+  box.appendChild(d);
+  box.scrollTop = box.scrollHeight;
+}
+
 async function loadRoom(rid) {
   curRoom = rid;
   document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("sel", b.dataset.rid === rid));
   stat("chatstat", "불러오는 중…");
   try {
-    const d = await apiGet("/api/messages/" + encodeURIComponent(rid));
-    // 서버: 기본 폴링은 배열 직접 반환, before_id 페이징만 {messages} 객체
-    const list = Array.isArray(d) ? d : (d.messages || []);
+    // 00시 초기화: 전체 조회(/api/messages)는 어제 대화를 되돌리므로 쓰지 않는다.
+    // 오늘 전용 조회(/api/chat/history, 날짜 미지정=서버 오늘) — 가족앱과 동일 경로.
+    // 15초 폴링이 이 조회를 쓰므로 자정을 넘기면 다음 폴링에서 새 날로 바뀐다.
+    const d = await apiGet("/api/chat/history?room=" + encodeURIComponent(rid));
+    const list = (d && d.messages) || [];
+    const rolled = !!(lastDay && d && d.date && d.date !== lastDay);
+    if (d && d.date) lastDay = d.date;
     renderMessages(list);
+    if (rolled) appendDayNote();
     stat("chatstat", list.length + "건");
   } catch (e) { stat("chatstat", "오류: " + e.message); }
 }
