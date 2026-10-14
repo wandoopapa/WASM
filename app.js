@@ -7,6 +7,7 @@ const stat = (id, t) => { $(id).textContent = t; };
 
 let ipn = null, token = null, me = null, labels = {}, rooms = [], curRoom = null, timer = null, lastDay = null;
 let stickBottom = true, lastMaxId = 0, brainTimer = null, brainRoom = null, brainAfterId = 0, brainDeadline = 0;
+let viewDate = null;  // null = 오늘(실시간) · 'YYYY-MM-DD' = 과거 날짜 읽기 전용 보기
 // 탭 닫기/새로고침 시 ephemeral 노드가 테일넷에 남지 않도록 로그아웃 시도.
 // (명시적 logout = 즉시 삭제, 그냥 끊기면 30~60분 후 정리)
 window.addEventListener("pagehide", () => { try { if (ipn) ipn.logout(); } catch (e) {} });
@@ -185,14 +186,23 @@ async function loadRoom(rid, opts) {
   opts = opts || {};
   const switched = (curRoom !== rid);
   curRoom = rid;
-  if (switched && brainTimer && brainRoom !== rid) stopBrainWait();
+  if (switched) { viewDate = null; stopBrainWait(); }
+  applyViewUI();
   document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("sel", b.dataset.rid === rid));
-  $("btn-brain").style.display = isPrivateRoom(rid) ? "none" : "";
+  $("btn-brain").style.display = (isPrivateRoom(rid) || viewDate) ? "none" : "";
   $("txt").placeholder = isPrivateRoom(rid) ? "AI 비서에게 메시지 — 보내면 바로 답변합니다" : "메시지 입력 (@브레인 호출 가능)";
   if (opts.forceBottom) stickBottom = true;
   stat("chatstat", "불러오는 중…");
   try {
     let list = [], rolled = false;
+    if (viewDate) {
+      // 과거 날짜 보기 — 채팅방·AI 비서방 공통으로 날짜 지정 조회(가족앱 📅와 동일 API)
+      const d = await apiGet("/api/chat/history?room=" + encodeURIComponent(rid) + "&date=" + encodeURIComponent(viewDate));
+      list = (d && d.messages) || [];
+      renderMessages(list);
+      stat("chatstat", "📜 " + viewDate + " 대화 " + list.length + "건 (읽기 전용)");
+      return list;
+    }
     if (isPrivateRoom(rid)) {
       // AI 비서방(private_<본인>) — 가족앱과 동일 경로 /api/messages/<room> (배열 반환, 전체 이력)
       const d = await apiGet("/api/messages/" + encodeURIComponent(rid));
@@ -230,6 +240,7 @@ function startBrainWait(room, afterId) {
   brainTimer = setInterval(() => { if (curRoom === brainRoom) loadRoom(brainRoom); else stopBrainWait(); }, 3000);
 }
 async function sendText() {
+  if (viewDate) return;  // 과거 날짜 보기는 읽기 전용
   const t = $("txt").value.trim();
   if (!t || !curRoom) return;
   const room = curRoom;
@@ -359,6 +370,54 @@ $("btn-brain").onclick = () => {
   el.focus();
 };
 $("txt").addEventListener("input", syncBrainBtn);
+function applyViewUI() {
+  const past = !!viewDate;
+  $("pastbar").hidden = !past;
+  if (past) $("pasttxt").textContent = "📜 " + viewDate + " 대화 보기 중 (읽기 전용)";
+  $("txt").disabled = past;
+  $("btn-send").disabled = past;
+  $("btn-photo").style.display = past ? "none" : "";
+  $("btn-video").style.display = past ? "none" : "";
+  if (past) $("btn-brain").style.display = "none";
+  else if (curRoom) $("btn-brain").style.display = isPrivateRoom(curRoom) ? "none" : "";
+}
+function setViewDate(d) {
+  viewDate = d;
+  stopBrainWait();
+  applyViewUI();
+  if (curRoom) loadRoom(curRoom, { forceBottom: true });
+}
+async function openCal() {
+  if (!curRoom) return;
+  const list = $("callist");
+  list.innerHTML = '<div class="calempty">날짜 불러오는 중…</div>';
+  $("calsheet").hidden = false;
+  try {
+    const d = await apiGet("/api/chat/history/dates?room=" + encodeURIComponent(curRoom));
+    const dates = (d && d.dates) || [], counts = (d && d.counts) || {};
+    list.innerHTML = "";
+    const todayBtn = document.createElement("button");
+    todayBtn.className = "calitem" + (!viewDate ? " sel" : "");
+    todayBtn.innerHTML = "<span>오늘 (실시간)</span>";
+    todayBtn.onclick = () => { $("calsheet").hidden = true; setViewDate(null); };
+    list.appendChild(todayBtn);
+    for (const day of dates) {
+      const b = document.createElement("button");
+      b.className = "calitem" + (viewDate === day ? " sel" : "");
+      const nm = document.createElement("span"); nm.textContent = day;
+      const ct = document.createElement("span"); ct.className = "cnt"; ct.textContent = (counts[day] != null ? counts[day] + "건" : "");
+      b.appendChild(nm); b.appendChild(ct);
+      b.onclick = () => { $("calsheet").hidden = true; setViewDate(day === todayStr() ? null : day); };
+      list.appendChild(b);
+    }
+    if (!dates.length) list.innerHTML = '<div class="calempty">저장된 대화 날짜가 없습니다</div>';
+  } catch (e) { list.innerHTML = '<div class="calempty">오류: ' + esc(e.message) + "</div>"; }
+}
+function todayStr() { const n = new Date(); return n.getFullYear() + "-" + String(n.getMonth() + 1).padStart(2, "0") + "-" + String(n.getDate()).padStart(2, "0"); }
+$("btn-cal").onclick = openCal;
+$("btn-cal-close").onclick = () => { $("calsheet").hidden = true; };
+$("calsheet").addEventListener("click", (e) => { if (e.target === $("calsheet")) $("calsheet").hidden = true; });
+$("btn-today").onclick = () => setViewDate(null);
 $("msgs").addEventListener("scroll", () => { const box = $("msgs"); stickBottom = (box.scrollHeight - box.scrollTop - box.clientHeight) < 120; });
 $("btn-send").onclick = sendText;
 $("txt").addEventListener("keydown", (e) => { if (e.key === "Enter") sendText(); });

@@ -101,6 +101,19 @@ header {
 .vprog { font-size: 13px; color: var(--muted); text-align: center; padding: 10px 4px; }
 .daynote { align-self: center; color: var(--muted); font-size: 12px; background: var(--panel2); padding: 5px 12px; border-radius: 999px; margin: 8px 0; }
 .sysnote { align-self: stretch; color: var(--muted); font-size: 12px; background: var(--panel2); padding: 6px 12px; border-radius: 10px; margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+#pastbar { flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: #2a2118; color: #f0c987; font-size: 13px; border-bottom: 1px solid var(--line); }
+#pastbar[hidden] { display: none; }
+#pastbar span { flex: 1; }
+.sheet { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.55); display: flex; align-items: flex-end; justify-content: center; }
+.sheet[hidden] { display: none; }
+.sheet-card { width: 100%; max-width: 520px; max-height: 70dvh; overflow-y: auto; background: var(--panel); border-radius: 16px 16px 0 0; padding: 14px 14px calc(14px + env(safe-area-inset-bottom)); }
+.sheet-head { display: flex; align-items: center; font-weight: 700; font-size: 15px; }
+.sheet-head span { flex: 1; }
+.calitem { display: flex; align-items: center; width: 100%; background: var(--panel2); color: var(--text); border-radius: 12px; padding: 12px 14px; margin-top: 8px; font-size: 14px; text-align: left; }
+.calitem .cnt { margin-left: auto; color: var(--muted); font-size: 12px; }
+.calitem.sel { background: var(--accent); color: #fff; }
+.calitem.sel .cnt { color: rgba(255,255,255,.85); }
+.calempty { color: var(--muted); font-size: 13px; padding: 14px 4px; }
 .m.brain .b { background: #282234; border: 1px solid var(--line); }
 #btn-brain { font-size: 16px; }
 #btn-brain.on { background: var(--accent); color: #fff; }
@@ -167,10 +180,12 @@ header {
     <header>
       <span class="dot"></span>
       <span id="whoami"></span>
+      <button class="hbtn" id="btn-cal" title="이전 날짜 대화 보기">📅</button>
       <button class="hbtn" id="btn-reload">⟳</button>
       <button class="hbtn" id="btn-logout">로그아웃</button>
     </header>
     <div id="tabs"></div>
+    <div id="pastbar" hidden><span id="pasttxt"></span><button class="hbtn" id="btn-today">오늘로 돌아가기</button></div>
     <div id="msgs"></div>
     <div class="composer">
       <div class="crow">
@@ -185,9 +200,15 @@ header {
   </div>
 
 </div>
+<div id="calsheet" class="sheet" hidden>
+  <div class="sheet-card">
+    <div class="sheet-head"><span>📅 날짜별 대화 보기</span><button class="hbtn" id="btn-cal-close">닫기</button></div>
+    <div id="callist"></div>
+  </div>
+</div>
 <input type="file" id="file-photo" accept="image/*" multiple hidden>
 <input type="file" id="file-video" accept="video/*" hidden>
 <script src="wasm_exec.js"></script>
-<script src="app.js?v=11"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>
