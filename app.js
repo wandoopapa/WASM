@@ -6,6 +6,7 @@ const show = (id) => { document.querySelectorAll(".scr").forEach(e => e.classLis
 const stat = (id, t) => { $(id).textContent = t; };
 
 let ipn = null, token = null, me = null, labels = {}, rooms = [], curRoom = null, timer = null, lastDay = null;
+let stickBottom = true, lastMaxId = 0, brainTimer = null, brainRoom = null, brainAfterId = 0, brainDeadline = 0;
 // 탭 닫기/새로고침 시 ephemeral 노드가 테일넷에 남지 않도록 로그아웃 시도.
 // (명시적 logout = 즉시 삭제, 그냥 끊기면 30~60분 후 정리)
 window.addEventListener("pagehide", () => { try { if (ipn) ipn.logout(); } catch (e) {} });
@@ -28,7 +29,7 @@ const apiGet = (p) => gwFetch(p, "GET");
 const apiPost = (p, obj) => gwFetch(p, "POST", JSON.stringify(obj));
 
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
-function dispName(uid) { return labels[uid] || uid || ""; }
+function dispName(uid) { if (uid === "ai") return "🧠 브레인"; return labels[uid] || uid || ""; }
 
 const mediaCache = {};  // url -> blob: URL (15초 자동 새로고침 시 재요청 방지)
 function mimeGuess(url) {
@@ -116,11 +117,30 @@ function fmtTime(ts) {
   const m = String(ts || "").match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
   return m ? m[4] + ":" + m[5] : "";
 }
+function isPrivateRoom(rid) { return !!(rid && rid.startsWith("private_")); }
+function scrollToBottom() {
+  const box = $("msgs");
+  requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; }); });
+}
 function renderMessages(list) {
-  const box = $("msgs"); box.innerHTML = "";
-  for (const m of list) {
+  const box = $("msgs");
+  const prevTop = box.scrollTop;
+  const view = (list && list.length > 300) ? list.slice(-300) : (list || []);
+  box.innerHTML = "";
+  for (const m of view) {
+    if (m && m.id && m.id > lastMaxId) lastMaxId = m.id;
+    const c0 = String((m && m.content) || "");
+    // 시스템성 메시지(prefill·decode·세션 초기화 등)는 작은 안내 줄로 표시
+    if (m.role === "system" || m.author === "system" || /prefill|decode/.test(String(m.author || ""))) {
+      const sn = document.createElement("div");
+      sn.className = "sysnote";
+      sn.textContent = c0;
+      box.appendChild(sn);
+      continue;
+    }
+    const isBrain = (m.author === "ai" || m.role === "assistant");
     const d = document.createElement("div");
-    d.className = "m" + ((m.author === me) ? " mine" : "");
+    d.className = "m" + ((m.author === me) ? " mine" : "") + (isBrain ? " brain" : "");
     const who = document.createElement("div");
     who.className = "who";
     const tm = fmtTime(m.created_at);
@@ -128,7 +148,7 @@ function renderMessages(list) {
     d.appendChild(who);
     const b = document.createElement("div");
     b.className = "b";
-    const c = String(m.content || "");
+    const c = c0;
     // 사진/동영상 마커 렌더 (서버 저장 형식: 📷 사진: <url> / 🎬 동영상: <url>)
     const lines = c.split("\n");
     for (const ln of lines) {
@@ -136,8 +156,8 @@ function renderMessages(list) {
       if (ph) {
         const isV = ln.startsWith("🎬");
         const el = document.createElement(isV ? "video" : "img");
-        if (isV) { el.controls = true; el.preload = "metadata"; loadVideo(el, ph[1]); }
-        else { el.alt = "사진"; el.onclick = () => mediaClick(el, ph[1]); loadMedia(el, ph[1]); }
+        if (isV) { el.controls = true; el.preload = "metadata"; el.addEventListener("loadedmetadata", () => { if (stickBottom) scrollToBottom(); }); loadVideo(el, ph[1]); }
+        else { el.alt = "사진"; el.onload = () => { if (stickBottom) scrollToBottom(); }; el.onclick = () => mediaClick(el, ph[1]); loadMedia(el, ph[1]); }
         b.appendChild(el);
       } else if (ln.trim()) {
         const sp = document.createElement("span");
@@ -150,48 +170,82 @@ function renderMessages(list) {
     d.appendChild(b);
     box.appendChild(d);
   }
-  box.scrollTop = box.scrollHeight;
+  if (stickBottom) scrollToBottom(); else box.scrollTop = prevTop;
 }
-
 function appendDayNote() {
   const box = $("msgs");
   const d = document.createElement("div");
   d.className = "daynote";
   d.textContent = "새 날이 시작되었습니다.";
   box.appendChild(d);
-  box.scrollTop = box.scrollHeight;
+  scrollToBottom();
 }
 
-async function loadRoom(rid) {
+async function loadRoom(rid, opts) {
+  opts = opts || {};
+  const switched = (curRoom !== rid);
   curRoom = rid;
+  if (switched && brainTimer && brainRoom !== rid) stopBrainWait();
   document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("sel", b.dataset.rid === rid));
+  $("btn-brain").style.display = isPrivateRoom(rid) ? "none" : "";
+  $("txt").placeholder = isPrivateRoom(rid) ? "AI 비서에게 메시지 — 보내면 바로 답변합니다" : "메시지 입력 (@브레인 호출 가능)";
+  if (opts.forceBottom) stickBottom = true;
   stat("chatstat", "불러오는 중…");
   try {
-    // 00시 초기화: 전체 조회(/api/messages)는 어제 대화를 되돌리므로 쓰지 않는다.
-    // 오늘 전용 조회(/api/chat/history, 날짜 미지정=서버 오늘) — 가족앱과 동일 경로.
-    // 15초 폴링이 이 조회를 쓰므로 자정을 넘기면 다음 폴링에서 새 날로 바뀐다.
-    const d = await apiGet("/api/chat/history?room=" + encodeURIComponent(rid));
-    const list = (d && d.messages) || [];
-    const rolled = !!(lastDay && d && d.date && d.date !== lastDay);
-    if (d && d.date) lastDay = d.date;
+    let list = [], rolled = false;
+    if (isPrivateRoom(rid)) {
+      // AI 비서방(private_<본인>) — 가족앱과 동일 경로 /api/messages/<room> (배열 반환, 전체 이력)
+      const d = await apiGet("/api/messages/" + encodeURIComponent(rid));
+      list = Array.isArray(d) ? d : ((d && d.messages) || []);
+    } else {
+      // 00시 초기화: 전체 조회(/api/messages)는 어제 대화를 되돌리므로 쓰지 않는다.
+      // 오늘 전용 조회(/api/chat/history, 날짜 미지정=서버 오늘) — 가족앱과 동일 경로.
+      // 15초 폴링이 이 조회를 쓰므로 자정을 넘기면 다음 폴링에서 새 날로 바뀐다.
+      const d = await apiGet("/api/chat/history?room=" + encodeURIComponent(rid));
+      list = (d && d.messages) || [];
+      rolled = !!(lastDay && d && d.date && d.date !== lastDay);
+      if (d && d.date) lastDay = d.date;
+    }
     renderMessages(list);
     if (rolled) appendDayNote();
+    // 브레인 답변 도착 판정 — 대기 중인 방에 assistant 메시지가 기준 id보다 뒤에 오면 완료
+    if (brainTimer && brainRoom === rid) {
+      const ans = list.some(m => m && m.id > brainAfterId && (m.author === "ai" || m.role === "assistant") && m.author !== "system");
+      if (ans) { stopBrainWait(); stickBottom = true; scrollToBottom(); stat("chatstat", "🧠 브레인 답변 도착"); return list; }
+      if (Date.now() > brainDeadline) { stopBrainWait(); stat("chatstat", "🧠 브레인이 아직 답변 중입니다 — 15초마다 자동으로 확인합니다"); return list; }
+      stat("chatstat", "🧠 브레인 답변 생성 중…");
+      return list;
+    }
     stat("chatstat", list.length + "건");
-  } catch (e) { stat("chatstat", "오류: " + e.message); }
+    return list;
+  } catch (e) { stat("chatstat", "오류: " + e.message); return null; }
 }
 
+function stopBrainWait() { if (brainTimer) { clearInterval(brainTimer); brainTimer = null; } brainRoom = null; }
+function startBrainWait(room, afterId) {
+  stopBrainWait();
+  brainRoom = room; brainAfterId = afterId || lastMaxId;
+  brainDeadline = Date.now() + 5 * 60 * 1000;
+  stat("chatstat", "🧠 브레인 답변 생성 중… (답변이 오면 자동으로 표시됩니다)");
+  brainTimer = setInterval(() => { if (curRoom === brainRoom) loadRoom(brainRoom); else stopBrainWait(); }, 3000);
+}
 async function sendText() {
   const t = $("txt").value.trim();
   if (!t || !curRoom) return;
+  const room = curRoom;
+  const brainCall = isPrivateRoom(room) || /@브레인/.test(t) || /@brain/i.test(t);
   $("btn-send").disabled = true;
   try {
-    await apiPost("/api/chat/" + encodeURIComponent(curRoom), { text: t });
+    await apiPost("/api/chat/" + encodeURIComponent(room), { text: t });
     $("txt").value = "";
-    await loadRoom(curRoom);
+    syncBrainBtn();
+    stickBottom = true;
+    const list = await loadRoom(room, { forceBottom: true });
+    scrollToBottom();
+    if (brainCall) startBrainWait(room, list ? lastMaxId : 0);
   } catch (e) { stat("chatstat", "전송 오류: " + e.message); }
   $("btn-send").disabled = false;
 }
-
 async function sendPhotos(files) {
   if (!files.length || !curRoom) return;
   const fl = Array.from(files).slice(0, 4);
@@ -213,7 +267,9 @@ async function sendPhotos(files) {
     let off = 0;
     for (const c of chunks) { body.set(c, off); off += c.length; }
     await gwFetch("/api/photo/" + encodeURIComponent(curRoom), "POST", body, "multipart/form-data; boundary=" + bnd);
-    await loadRoom(curRoom);
+    stickBottom = true;
+    await loadRoom(curRoom, { forceBottom: true });
+    scrollToBottom();
     stat("chatstat", fl.length + "장 전송됨");
   } catch (e) { stat("chatstat", "사진 오류: " + e.message); }
 }
@@ -230,7 +286,9 @@ async function sendVideo(file) {
     const body = new Uint8Array(head.length + buf.length + tail.length);
     body.set(head, 0); body.set(buf, head.length); body.set(tail, head.length + buf.length);
     await gwFetch("/api/photo/" + encodeURIComponent(curRoom), "POST", body, "multipart/form-data; boundary=" + bnd);
-    await loadRoom(curRoom);
+    stickBottom = true;
+    await loadRoom(curRoom, { forceBottom: true });
+    scrollToBottom();
   } catch (e) { stat("chatstat", "동영상 오류: " + e.message); }
 }
 
@@ -245,6 +303,9 @@ async function enterChat() {
     labels = (lb && lb.labels) || {};
     const rc = await apiGet("/api/identity/my-chat-rooms");
     rooms = (rc && rc.rooms) || [];
+    // AI 섹션의 AI 비서방(개인방 private_<본인>) 포함 — 서버 my-chat-rooms는 채팅방만 주므로 여기서 합성.
+    // 조회·전송 경로는 가족앱과 동일(/api/messages/<room> 조회 · /api/chat/<room> 전송, 전송 즉시 브레인 답변).
+    if (me && !rooms.some(r => r.id === "private_" + me)) rooms.push({ id: "private_" + me, title: "🔒 AI 비서" });
     if (!rooms.length) throw new Error("접근 가능한 방이 없습니다");
     const tabs = $("tabs"); tabs.innerHTML = "";
     for (const r of rooms) {
@@ -254,7 +315,7 @@ async function enterChat() {
       tabs.appendChild(b);
     }
     show("scr-chat");
-    await loadRoom(rooms[0].id);
+    await loadRoom(rooms[0].id, { forceBottom: true });
     clearInterval(timer);
     timer = setInterval(() => { if (curRoom) loadRoom(curRoom); }, 15000);
   } catch (e) { stat("chatstat", "오류: " + e.message); }
@@ -288,6 +349,17 @@ async function boot() {
 }
 
 $("btn-login").onclick = () => { stat("loginstat", "로그인 URL 요청 중…"); ipn.login(); };
+function syncBrainBtn() { $("btn-brain").classList.toggle("on", /@브레인/.test($("txt").value) || /@brain/i.test($("txt").value)); }
+$("btn-brain").onclick = () => {
+  const el = $("txt");
+  if (/^\s*@브레인\s?/.test(el.value)) el.value = el.value.replace(/^\s*@브레인\s?/, "");
+  else if (/^\s*@brain\s?/i.test(el.value)) el.value = el.value.replace(/^\s*@brain\s?/i, "");
+  else el.value = "@브레인 " + el.value.replace(/^\s+/, "");
+  syncBrainBtn();
+  el.focus();
+};
+$("txt").addEventListener("input", syncBrainBtn);
+$("msgs").addEventListener("scroll", () => { const box = $("msgs"); stickBottom = (box.scrollHeight - box.scrollTop - box.clientHeight) < 120; });
 $("btn-send").onclick = sendText;
 $("txt").addEventListener("keydown", (e) => { if (e.key === "Enter") sendText(); });
 $("btn-reload").onclick = () => { if (curRoom) loadRoom(curRoom); };

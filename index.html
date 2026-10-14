@@ -26,8 +26,9 @@ body {
   font-family: -apple-system, "Segoe UI", "Noto Sans KR", sans-serif;
   font-size: 15px; line-height: 1.45;
 }
-.wrap { max-width: 520px; margin: 0 auto; min-height: 100%; display: flex; flex-direction: column; }
-.scr { display: none; flex: 1; flex-direction: column; min-height: 100%; }
+.wrap { max-width: 520px; margin: 0 auto; height: 100%; height: 100dvh; display: flex; flex-direction: column; }
+.scr { display: none; flex: 1; flex-direction: column; min-height: 0; }
+#scr-chat { overflow: hidden; }
 .scr.on { display: flex; }
 .center { margin: auto; text-align: center; padding: 48px 28px; }
 .center h1 { font-size: 22px; margin: 0 0 10px; }
@@ -44,7 +45,7 @@ button { font-family: inherit; cursor: pointer; border: 0; }
 a.login { color: #7aa8ff; }
 /* ---- 채팅 헤더 ---- */
 header {
-  position: sticky; top: 0; z-index: 5;
+  flex-shrink: 0; z-index: 5;
   display: flex; align-items: center; gap: 10px;
   padding: 12px 14px calc(10px + env(safe-area-inset-top)) ;
   padding-top: calc(12px + env(safe-area-inset-top));
@@ -60,6 +61,7 @@ header {
 .hbtn:active { opacity: .7; }
 /* ---- 방 탭 ---- */
 #tabs {
+  flex-shrink: 0; background: var(--bg);
   display: flex; gap: 8px; padding: 10px 14px;
   overflow-x: auto; scrollbar-width: none;
   border-bottom: 1px solid var(--line);
@@ -71,7 +73,7 @@ header {
 }
 #tabs button.sel { background: var(--accent); color: #fff; }
 /* ---- 메시지 ---- */
-#msgs { flex: 1; overflow-y: auto; padding: 16px 14px 8px; display: flex; flex-direction: column; gap: 4px; }
+#msgs { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px 14px 8px; display: flex; flex-direction: column; gap: 4px; }
 .m { display: flex; flex-direction: column; max-width: 82%; align-self: flex-start; }
 .m.mine { align-self: flex-end; align-items: flex-end; }
 .who { font-size: 12px; color: var(--muted); margin: 8px 4px 3px; }
@@ -98,9 +100,13 @@ header {
 .b video.loading { min-height: 180px; background: #000; }
 .vprog { font-size: 13px; color: var(--muted); text-align: center; padding: 10px 4px; }
 .daynote { align-self: center; color: var(--muted); font-size: 12px; background: var(--panel2); padding: 5px 12px; border-radius: 999px; margin: 8px 0; }
+.sysnote { align-self: stretch; color: var(--muted); font-size: 12px; background: var(--panel2); padding: 6px 12px; border-radius: 10px; margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.m.brain .b { background: #282234; border: 1px solid var(--line); }
+#btn-brain { font-size: 16px; }
+#btn-brain.on { background: var(--accent); color: #fff; }
 /* ---- 입력창 ---- */
 .composer {
-  position: sticky; bottom: 0; z-index: 5;
+  flex-shrink: 0; z-index: 5;
   padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
   background: rgba(11,14,20,.94); backdrop-filter: blur(12px);
   border-top: 1px solid var(--line);
@@ -171,6 +177,7 @@ header {
         <input id="txt" placeholder="메시지 입력" autocomplete="off">
         <button class="ibtn" id="btn-photo" title="사진">📷</button>
         <button class="ibtn" id="btn-video" title="동영상">🎬</button>
+        <button class="ibtn" id="btn-brain" title="@브레인 호출 — 누르면 입력 앞에 @브레인이 붙습니다">🧠</button>
         <button id="btn-send">전송</button>
       </div>
       <div id="chatstat"></div>
@@ -181,6 +188,6 @@ header {
 <input type="file" id="file-photo" accept="image/*" multiple hidden>
 <input type="file" id="file-video" accept="video/*" hidden>
 <script src="wasm_exec.js"></script>
-<script src="app.js?v=10"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>
